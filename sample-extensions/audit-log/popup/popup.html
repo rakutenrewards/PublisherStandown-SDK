@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Audit Log · Standdown SDK</title>
+    <style>
+      body { font-family: monospace; font-size: 12px; min-width: 360px; padding: 12px; }
+
+      #status { font-weight: bold; margin-bottom: 8px; }
+      #status.match { color: #d32f2f; }
+      #status.clean { color: #388e3c; }
+      #status.loading { color: #555; }
+
+      .section-label {
+        font-size: 10px;
+        font-weight: bold;
+        color: #888;
+        letter-spacing: 0.05em;
+        margin-bottom: 4px;
+      }
+
+      .section-divider { border: none; border-top: 1px solid #ddd; margin: 10px 0; }
+
+      pre { background: #f5f5f5; padding: 8px; overflow-x: auto; margin: 0; }
+
+      .field { margin-bottom: 4px; }
+      .label { color: #888; }
+
+      .subsection-label { font-weight: bold; margin: 6px 0 2px; }
+
+      ol#redirect-chain {
+        margin: 0 0 4px 0;
+        padding-left: 20px;
+      }
+      ol#redirect-chain li {
+        word-break: break-all;
+        margin-bottom: 2px;
+      }
+
+      .match-entry {
+        background: #f5f5f5;
+        padding: 4px 6px;
+        margin-bottom: 4px;
+      }
+      .match-network { font-weight: bold; }
+      .match-url { word-break: break-all; color: #555; }
+      .match-rule { color: #888; }
+    </style>
+  </head>
+  <body>
+    <div id="status" class="loading">Checking…</div>
+
+    <div class="section-label">AUDIT LOG EVENT</div>
+    <div id="event-section">
+      <div id="event-none" style="display:none" class="field">No active session for this domain.</div>
+      <div id="event-details" style="display:none">
+        <div class="field"><span class="label">Domain:</span> <span id="event-domain"></span></div>
+        <div class="field"><span class="label">Detected at:</span> <span id="event-timestamp"></span></div>
+        <div class="field"><span class="label">Expires at:</span> <span id="event-expires"></span></div>
+        <div class="field"><span class="label">Networks:</span> <span id="event-networks"></span></div>
+        <div class="field"><span class="label">Triggered by:</span> <span id="event-tab"></span></div>
+        <div id="redirect-chain-section" style="display:none">
+          <div class="subsection-label">Redirect Chain</div>
+          <ol id="redirect-chain"></ol>
+        </div>
+        <div id="matched-patterns-section" style="display:none">
+          <div class="subsection-label">Matches</div>
+          <div id="matched-patterns"></div>
+        </div>
+      </div>
+    </div>
+
+    <hr class="section-divider">
+
+    <div class="section-label">RAW EVENT</div>
+    <pre id="event-raw"></pre>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -1,0 +1,28 @@
+# Source and tests — not needed by consumers
+src/
+tests/
+
+# Spec / planning docs
+specs/
+spec/
+sample-policies/
+scripts/
+
+# Config files — not needed at runtime
+tsup.config.ts
+tsconfig.json
+eslint.config.js
+.prettierrc
+vitest.config.ts
+.vscode/
+.husky/
+.gitignore
+.gitmodules
+.npmignore
+
+# Dev tooling
+rr-standards/
+node_modules/
+
+# CI
+.github/

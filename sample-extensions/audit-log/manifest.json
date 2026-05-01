@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Standdown SDK — Audit Log Sample",
+  "version": "0.0.1",
+  "description": "Reference MV3 extension demonstrating audit log persistence with @rakuten-rewards/standdown-sdk",
+  "permissions": ["webNavigation", "webRequest", "tabs", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "service-worker.js",
+    "scripts": ["service-worker.js"],
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Audit Log"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "standdown-sdk-audit-log@rakuten-rewards"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+*.js.map
+*.d.ts.map
+.DS_Store
+.tsbuildinfo
+test-extension/sdk.mjs
+sample-extensions/*/sdk.mjs
+sample-extensions/session-manager/session-manager.js
+test-results/

@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Standdown SDK — Session Manager Sample",
+  "version": "0.0.1",
+  "description": "Reference MV3 extension demonstrating SessionManager-based activation decisions with @rakuten-rewards/standdown-sdk",
+  "permissions": ["webNavigation", "webRequest", "tabs"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "service-worker.js",
+    "scripts": ["service-worker.js"],
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Session Manager"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "standdown-sdk-test@rakuten-rewards"
+    }
+  }
+}
