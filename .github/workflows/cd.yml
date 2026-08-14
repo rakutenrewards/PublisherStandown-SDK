@@ -1,0 +1,181 @@
+name: CD
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 1.2.3)"
+        required: true
+        type: string
+
+concurrency:
+  group: cd-release
+  cancel-in-progress: false  # Never cancel an in-flight release
+
+jobs:
+  # ─── Stage 1: Compile ───────────────────────────────────────────────────────
+  compile:
+    name: Compile
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js (LTS)
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Audit dependencies
+        run: pnpm audit --audit-level=high
+
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Unit & integration tests (with coverage)
+        run: pnpm test:coverage
+
+      - name: Build
+        run: pnpm build
+
+      - name: Bundle size check
+        run: pnpm size
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          retention-days: 1
+
+  # ─── Stage 2: Static Analysis ───────────────────────────────────────────────
+  static-analysis:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    needs: compile
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    needs: [compile, static-analysis]
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Checkout (full history for changelog)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js (LTS)
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Normalize version
+        id: ver
+        run: echo "version=${RAW_VERSION#v}" >> "$GITHUB_OUTPUT"
+        env:
+          RAW_VERSION: ${{ inputs.version }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download dist artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Bump version in package.json
+        run: npm version ${{ steps.ver.outputs.version }} --no-git-tag-version --no-package-lock
+
+      - name: Commit, tag and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
+          git stash
+          git pull --rebase origin main
+          git stash pop
+          git add package.json
+          git commit -m "chore: release v${{ steps.ver.outputs.version }}"
+          git tag -d "v${{ steps.ver.outputs.version }}" 2>/dev/null || true
+          git push origin --delete "v${{ steps.ver.outputs.version }}" 2>/dev/null || true
+          git tag "v${{ steps.ver.outputs.version }}"
+          git push origin main "v${{ steps.ver.outputs.version }}"
+
+      - name: Generate changelog
+        run: |
+          TAG="v${{ steps.ver.outputs.version }}"
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${TAG}$" | head -1 || true)
+
+          if [ -z "$PREV_TAG" ]; then
+            RANGE="${TAG}"
+          else
+            RANGE="${PREV_TAG}..${TAG}"
+          fi
+
+          git log "${RANGE}" \
+            --pretty=format:"- %s (%h)" \
+            --no-merges \
+            | grep -E "^- (feat|fix|perf|refactor|docs|chore|ci|build|test)" \
+            > /tmp/changelog.txt \
+            || echo "- No conventional commits found in this range" > /tmp/changelog.txt
+
+      - name: Pack npm tarball
+        run: pnpm pack --pack-destination .
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: "*.tgz"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: "v${{ steps.ver.outputs.version }}"
+          name: "v${{ steps.ver.outputs.version }}"
+          body_path: /tmp/changelog.txt
+          draft: false
+          prerelease: ${{ contains(steps.ver.outputs.version, '-') }}
+          files: "*.tgz"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
