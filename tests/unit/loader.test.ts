@@ -51,7 +51,7 @@ describe('loadPolicies: no-arg and empty-array behavior', () => {
   it('returns [] and warns when all supplied policies are invalid', () => {
     const spy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const bad = makePolicy({ id: '' });
-    expect(loadPolicies([bad as unknown as NetworkPolicy])).toHaveLength(0);
+    expect(loadPolicies([bad])).toHaveLength(0);
     expect(spy).toHaveBeenCalledOnce();
     spy.mockRestore();
   });
@@ -108,7 +108,7 @@ describe('loadPolicies: invalid user policies are skipped', () => {
 
   it('skips an invalid user policy and returns [] (no valid policies remain)', () => {
     const bad = makePolicy({ id: '' });
-    const result = loadPolicies([bad as unknown as NetworkPolicy]);
+    const result = loadPolicies([bad]);
     expect(result).toHaveLength(0);
     expect(console.warn).toHaveBeenCalledOnce();
   });
@@ -116,7 +116,7 @@ describe('loadPolicies: invalid user policies are skipped', () => {
   it('returns 1 when mix of valid + invalid user policies (invalid skipped)', () => {
     const good = makePolicy({ id: 'good-network' });
     const bad = makePolicy({ id: '' });
-    const result = loadPolicies([good, bad as unknown as NetworkPolicy]);
+    const result = loadPolicies([good, bad]);
     expect(result).toHaveLength(1);
     expect(findById(result, 'good-network').id).toBe('good-network');
     expect(console.warn).toHaveBeenCalledOnce();
@@ -133,7 +133,7 @@ describe('loadPolicies: top-level validation: missing required fields', () => {
 
   it('skips a policy with no id and warns', () => {
     const policy = makePolicy({ id: '' });
-    expect(loadPolicies([policy as unknown as NetworkPolicy])).toHaveLength(0);
+    expect(loadPolicies([policy])).toHaveLength(0);
     expect(console.warn).toHaveBeenCalledOnce();
   });
 
@@ -151,19 +151,19 @@ describe('loadPolicies: top-level validation: missing required fields', () => {
 
   it('skips a policy with a non-integer policyVersion (string) and warns', () => {
     const policy = makePolicy({ policyVersion: '2' as unknown as number });
-    expect(loadPolicies([policy as unknown as NetworkPolicy])).toHaveLength(0);
+    expect(loadPolicies([policy])).toHaveLength(0);
     expect(console.warn).toHaveBeenCalledOnce();
   });
 
   it('skips a policy with a float policyVersion and warns', () => {
     const policy = makePolicy({ policyVersion: 2.5 });
-    expect(loadPolicies([policy as unknown as NetworkPolicy])).toHaveLength(0);
+    expect(loadPolicies([policy])).toHaveLength(0);
     expect(console.warn).toHaveBeenCalledOnce();
   });
 
   it('skips a policy with a zero policyVersion and warns', () => {
     const policy = makePolicy({ policyVersion: 0 });
-    expect(loadPolicies([policy as unknown as NetworkPolicy])).toHaveLength(0);
+    expect(loadPolicies([policy])).toHaveLength(0);
     expect(console.warn).toHaveBeenCalledOnce();
   });
 
@@ -184,7 +184,7 @@ describe('loadPolicies: top-level validation: missing required fields', () => {
 
   it('skips a policy with a string schemaVersion and warns', () => {
     const policy = makePolicy({ schemaVersion: '2' as unknown as number });
-    expect(loadPolicies([policy as unknown as NetworkPolicy])).toHaveLength(0);
+    expect(loadPolicies([policy])).toHaveLength(0);
     expect(console.warn).toHaveBeenCalledOnce();
   });
 
@@ -197,13 +197,13 @@ describe('loadPolicies: top-level validation: missing required fields', () => {
   it('skips a policy with an unsupported schemaVersion and warns', () => {
     // 1 is the old schema version; no longer supported
     const policy = makePolicy({ schemaVersion: 1 });
-    expect(loadPolicies([policy as unknown as NetworkPolicy])).toHaveLength(0);
+    expect(loadPolicies([policy])).toHaveLength(0);
     expect(console.warn).toHaveBeenCalledOnce();
   });
 
   it('skips a policy with an unrecognised schemaVersion and warns', () => {
     const policy = makePolicy({ schemaVersion: 99 });
-    expect(loadPolicies([policy as unknown as NetworkPolicy])).toHaveLength(0);
+    expect(loadPolicies([policy])).toHaveLength(0);
     expect(console.warn).toHaveBeenCalledOnce();
   });
 
@@ -220,13 +220,13 @@ describe('loadPolicies: top-level validation: missing required fields', () => {
 
   it('skips a policy with an empty network.id and warns', () => {
     const policy = makePolicy({ network: { id: '', name: 'Test' } });
-    expect(loadPolicies([policy as unknown as NetworkPolicy])).toHaveLength(0);
+    expect(loadPolicies([policy])).toHaveLength(0);
     expect(console.warn).toHaveBeenCalledOnce();
   });
 
   it('skips a policy with an empty network.name and warns', () => {
     const policy = makePolicy({ network: { id: 'test', name: '' } });
-    expect(loadPolicies([policy as unknown as NetworkPolicy])).toHaveLength(0);
+    expect(loadPolicies([policy])).toHaveLength(0);
     expect(console.warn).toHaveBeenCalledOnce();
   });
 
@@ -240,7 +240,7 @@ describe('loadPolicies: top-level validation: missing required fields', () => {
     const p1 = makePolicy({ id: '' });
     const p2 = makePolicy({ policyVersion: 0 });
     expect(
-      loadPolicies([p1 as unknown as NetworkPolicy, p2 as unknown as NetworkPolicy]),
+      loadPolicies([p1, p2]),
     ).toHaveLength(0);
     expect(console.warn).toHaveBeenCalledTimes(2);
   });
@@ -257,7 +257,7 @@ describe('loadPolicies: rule-level validation', () => {
   it('skips a rule missing reason and warns', () => {
     const policy = makePolicy({
       rules: [
-        { domain: 'example.com', reason: '' } as unknown as PolicyRule,
+        { domain: 'example.com', reason: '' },
       ],
     });
     const result = loadPolicies([policy]);
@@ -267,7 +267,7 @@ describe('loadPolicies: rule-level validation', () => {
 
   it('skips a rule with no matching fields (only reason present) and warns', () => {
     const policy = makePolicy({
-      rules: [{ reason: 'no matching fields' } as PolicyRule],
+      rules: [{ reason: 'no matching fields' }],
     });
     const result = loadPolicies([policy]);
     expect(findById(result, 'test-network').rules).toHaveLength(0);
@@ -278,7 +278,7 @@ describe('loadPolicies: rule-level validation', () => {
     const policy = makePolicy({
       rules: [
         { domain: 'good.com', reason: 'valid rule' },
-        { reason: 'missing matching field' } as PolicyRule,
+        { reason: 'missing matching field' },
         { params: 'afsrc', reason: 'also valid' },
       ],
     });
@@ -289,7 +289,7 @@ describe('loadPolicies: rule-level validation', () => {
 
   it('retains the policy (with filtered rules) when all rules are invalid', () => {
     const policy = makePolicy({
-      rules: [{ reason: 'no fields' } as PolicyRule],
+      rules: [{ reason: 'no fields' }],
     });
     const result = loadPolicies([policy]);
     // Policy itself is valid; it just has no usable rules, still included

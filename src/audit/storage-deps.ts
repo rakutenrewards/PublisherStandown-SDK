@@ -23,7 +23,7 @@ export function buildStorageDeps(): StorageDeps {
   return {
     async get(key: string): Promise<Record<string, unknown>> {
       const result = await chrome.storage.local.get(key);
-      return result as Record<string, unknown>;
+      return result;
     },
     async set(key: string, value: unknown): Promise<void> {
       await chrome.storage.local.set({ [key]: value });
