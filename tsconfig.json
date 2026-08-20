@@ -9,6 +9,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
+    "types": ["chrome"],
 
     /* Emit */
     "rootDir": ".",
