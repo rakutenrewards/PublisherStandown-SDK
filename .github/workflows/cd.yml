@@ -83,6 +83,7 @@ jobs:
     name: Publish
     runs-on: ubuntu-latest
     needs: [compile, static-analysis]
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: write
       id-token: write
@@ -109,10 +110,17 @@ jobs:
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: Refuse to overwrite an existing release
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          TAG="v${{ steps.ver.outputs.version }}"
-          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+          TAG="v${VERSION}"
+          git ls-remote --exit-code --tags origin "refs/tags/${TAG}"
+          status=$?
+          if [ "$status" -eq 0 ]; then
             echo "::error::${TAG} already exists. Bump the version via the Prepare Release workflow before publishing again."
+            exit 1
+          elif [ "$status" -ne 2 ]; then
+            echo "::error::Could not verify whether ${TAG} already exists (git ls-remote exited ${status}). Failing closed rather than risking an overwrite."
             exit 1
           fi
 

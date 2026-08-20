@@ -22,14 +22,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-
       - name: Setup Node.js (LTS)
         uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
 
       - name: Normalize version
         id: ver
@@ -38,13 +34,15 @@ jobs:
           RAW_VERSION: ${{ inputs.version }}
 
       - name: Bump version in package.json
-        run: npm version ${{ steps.ver.outputs.version }} --no-git-tag-version --no-package-lock
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: npm version "$VERSION" --no-git-tag-version --no-package-lock
 
       - name: Open release PR
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          VERSION="${{ steps.ver.outputs.version }}"
           BRANCH="release/v${VERSION}"
 
           git config user.name "github-actions[bot]"
