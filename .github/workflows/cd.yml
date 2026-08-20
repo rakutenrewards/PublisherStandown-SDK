@@ -1,12 +1,7 @@
 name: CD
 
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Version to release (e.g. 1.2.3)"
-        required: true
-        type: string
+  workflow_dispatch: {}
 
 concurrency:
   group: cd-release
@@ -109,11 +104,17 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - name: Normalize version
+      - name: Read version from package.json
         id: ver
-        run: echo "version=${RAW_VERSION#v}" >> "$GITHUB_OUTPUT"
-        env:
-          RAW_VERSION: ${{ inputs.version }}
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Refuse to overwrite an existing release
+        run: |
+          TAG="v${{ steps.ver.outputs.version }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::error::${TAG} already exists. Bump the version via the Prepare Release workflow before publishing again."
+            exit 1
+          fi
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -124,23 +125,13 @@ jobs:
           name: dist
           path: dist/
 
-      - name: Bump version in package.json
-        run: npm version ${{ steps.ver.outputs.version }} --no-git-tag-version --no-package-lock
-
-      - name: Commit, tag and push
+      - name: Tag and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
-          git stash
-          git pull --rebase origin main
-          git stash pop
-          git add package.json
-          git commit -m "chore: release v${{ steps.ver.outputs.version }}"
-          git tag -d "v${{ steps.ver.outputs.version }}" 2>/dev/null || true
-          git push origin --delete "v${{ steps.ver.outputs.version }}" 2>/dev/null || true
           git tag "v${{ steps.ver.outputs.version }}"
-          git push origin main "v${{ steps.ver.outputs.version }}"
+          git push origin "v${{ steps.ver.outputs.version }}"
 
       - name: Generate changelog
         run: |
