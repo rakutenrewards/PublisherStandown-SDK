@@ -114,8 +114,7 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
           TAG="v${VERSION}"
-          git ls-remote --exit-code --tags origin "refs/tags/${TAG}"
-          status=$?
+          git ls-remote --exit-code --tags origin "refs/tags/${TAG}" && status=0 || status=$?
           if [ "$status" -eq 0 ]; then
             echo "::error::${TAG} already exists. Bump the version via the Prepare Release workflow before publishing again."
             exit 1
