@@ -30,11 +30,15 @@ Zero-dependency TypeScript SDK for detecting affiliate redirect patterns in Mani
 
 ## Installation
 
+This package is not published to npm. Install directly from the tarball asset attached to a [GitHub Release](https://github.com/rakutenrewards/PublisherStandown-SDK/releases):
+
 ```bash
-npm install @rakuten-rewards/standdown-sdk
-# or
-pnpm add @rakuten-rewards/standdown-sdk
+npm install https://github.com/rakutenrewards/PublisherStandown-SDK/releases/download/v0.5.0/rakuten-rewards-standdown-sdk-0.5.0.tgz
 ```
+
+Replace `v0.5.0` / `0.5.0` with the version you want to pin to. Check the [Releases page](https://github.com/rakutenrewards/PublisherStandown-SDK/releases) for the latest tag and matching tarball filename.
+
+> **Note:** The `github:rakutenrewards/PublisherStandown-SDK#<tag>` git-dependency shorthand does not work for this package. `dist/` is gitignored and there is no build step in the install lifecycle, so it installs `package.json`/`README.md`/`LICENSE` only, with no built SDK. Use the release tarball URL above instead.
 
 **Requirements**
 
