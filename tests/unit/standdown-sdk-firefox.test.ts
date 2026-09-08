@@ -1,24 +1,27 @@
 /**
- * StanddownSDK Firefox namespace resolution tests
+ * StanddownSDK Firefox / Safari namespace resolution tests
  *
- * Exercises `resolveWebExtApi()` by controlling `globalThis.browser` in each
- * test. Verifies that the SDK prefers Firefox's `browser` namespace when it
- * exposes `webNavigation`, and falls back to stub-tracker mode otherwise.
+ * Exercises `resolveWebExtApi()` and per-browser dep selection by controlling
+ * `globalThis.browser` and `globalThis.navigator` in each test. Verifies that:
+ * - Chrome/Firefox/Edge use headers mode (webRequest.onHeadersReceived) and
+ *   never touch webNavigation (so the permission is optional there).
+ * - Safari (navigator.vendor) uses navigation-only mode (webNavigation).
+ * - Missing/broken namespaces fall back to stub-tracker mode.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { StanddownSDK } from '../../src/api/index.js';
 import type {
   BeforeNavigateDetails,
-  BeforeRequestDetails,
   CommittedDetails,
+  HeadersReceivedDetails,
 } from '../../src/detection/tracker.js';
 import { makeSpyEvent } from '../helpers/mock-events.js';
 
 // ---------------------------------------------------------------------------
-// Firefox namespace resolution tests
+// Namespace resolution + per-browser mode selection
 // ---------------------------------------------------------------------------
 
-describe('StanddownSDK: Firefox browser namespace resolution', () => {
+describe('StanddownSDK: browser namespace resolution', () => {
   afterEach(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
     try { delete (globalThis as any).browser; } catch { /* ignore non-configurable */ }
@@ -26,14 +29,16 @@ describe('StanddownSDK: Firefox browser namespace resolution', () => {
     try { delete (globalThis as any).navigator; } catch { /* ignore non-configurable */ }
   });
 
-  it('registers listeners on browser.* events when browser exposes webNavigation', () => {
-    // Arrange: construct a minimal browser mock with spy addListeners
+  it('headers mode: registers webRequest.onHeadersReceived on browser.* and never touches webNavigation (Firefox)', () => {
+    // Firefox exposes the API as `browser`. Non-Apple vendor → headers mode.
     const mockBrowser = {
-      webNavigation: {
-        onCommitted: makeSpyEvent<CommittedDetails>(),
-      },
       webRequest: {
-        onBeforeRequest: makeSpyEvent<BeforeRequestDetails>(),
+        onHeadersReceived: makeSpyEvent<HeadersReceivedDetails>(),
+      },
+      // Present but must NOT be registered on non-Safari — webNavigation is optional here.
+      webNavigation: {
+        onBeforeNavigate: makeSpyEvent<BeforeNavigateDetails>(),
+        onCommitted: makeSpyEvent<CommittedDetails>(),
       },
       tabs: {
         onRemoved: makeSpyEvent<number>(),
@@ -41,25 +46,45 @@ describe('StanddownSDK: Firefox browser namespace resolution', () => {
     };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
     (globalThis as any).browser = mockBrowser;
+    Object.defineProperty(globalThis, 'navigator', { value: { vendor: 'Google Inc.' }, configurable: true });
 
-    // Act — no-policy warn fires because no policies are passed; suppress it.
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const sdk = new StanddownSDK();
     warnSpy.mockRestore();
 
-    // Assert: TrackerDeps listeners wired to browser, not chrome
-    expect(mockBrowser.webRequest.onBeforeRequest.addListener).toHaveBeenCalledTimes(1);
-    expect(mockBrowser.webNavigation.onCommitted.addListener).toHaveBeenCalledTimes(1);
+    // headers mode wired to browser.*, not chrome
+    expect(mockBrowser.webRequest.onHeadersReceived.addListener).toHaveBeenCalledTimes(1);
     expect(mockBrowser.tabs.onRemoved.addListener).toHaveBeenCalledTimes(1);
+    // webNavigation is untouched on non-Safari
+    expect(mockBrowser.webNavigation.onBeforeNavigate.addListener).not.toHaveBeenCalled();
+    expect(mockBrowser.webNavigation.onCommitted.addListener).not.toHaveBeenCalled();
 
-    // Assert: destroy() calls removeListener on the same browser namespace
+    // destroy() removes listeners from the same browser namespace
     sdk.destroy();
-    expect(mockBrowser.webRequest.onBeforeRequest.removeListener).toHaveBeenCalledTimes(1);
-    expect(mockBrowser.webNavigation.onCommitted.removeListener).toHaveBeenCalledTimes(1);
+    expect(mockBrowser.webRequest.onHeadersReceived.removeListener).toHaveBeenCalledTimes(1);
     expect(mockBrowser.tabs.onRemoved.removeListener).toHaveBeenCalledTimes(1);
   });
 
-  it('falls back to stub-tracker mode when browser is present but has no webNavigation', () => {
+  it('resolves headers mode when browser exposes only webRequest (no webNavigation declared)', () => {
+    // Chrome/Firefox/Edge build that omits the optional webNavigation permission.
+    const mockBrowser = {
+      webRequest: { onHeadersReceived: makeSpyEvent<HeadersReceivedDetails>() },
+      tabs: { onRemoved: makeSpyEvent<number>() },
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
+    (globalThis as any).browser = mockBrowser;
+    Object.defineProperty(globalThis, 'navigator', { value: { vendor: 'Google Inc.' }, configurable: true });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const sdk = new StanddownSDK();
+    warnSpy.mockRestore();
+
+    expect(mockBrowser.webRequest.onHeadersReceived.addListener).toHaveBeenCalledTimes(1);
+    expect(mockBrowser.tabs.onRemoved.addListener).toHaveBeenCalledTimes(1);
+    sdk.destroy();
+  });
+
+  it('falls back to stub-tracker mode when browser is present but exposes neither webRequest nor webNavigation', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
     (globalThis as any).browser = { someOtherApi: {} };
     // chrome is not defined in Node.js → tryBuildDeps() returns null → stub mode
@@ -104,7 +129,7 @@ describe('StanddownSDK: Firefox browser namespace resolution', () => {
 
   it('uses navigation-only mode on Safari (navigator.vendor = "Apple Computer, Inc.")', () => {
     // Simulates Safari: webRequest stubs are callable but silently drop listeners.
-    // The SDK detects Safari via navigator.vendor and bypasses webRequest entirely.
+    // The SDK detects Safari via navigator.vendor and uses webNavigation instead.
     const mockBrowser = {
       webNavigation: {
         onBeforeNavigate: makeSpyEvent<BeforeNavigateDetails>(),
@@ -112,7 +137,7 @@ describe('StanddownSDK: Firefox browser namespace resolution', () => {
       },
       webRequest: {
         // Callable stub — same shape as real Safari; must NOT be registered.
-        onBeforeRequest: makeSpyEvent<BeforeRequestDetails>(),
+        onHeadersReceived: makeSpyEvent<HeadersReceivedDetails>(),
       },
       tabs: {
         onRemoved: makeSpyEvent<number>(),
@@ -121,18 +146,17 @@ describe('StanddownSDK: Firefox browser namespace resolution', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
     (globalThis as any).browser = mockBrowser;
     // Node/Vitest has no navigator global; define one for this test.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-    (globalThis as any).navigator = { vendor: 'Apple Computer, Inc.' };
+    Object.defineProperty(globalThis, 'navigator', { value: { vendor: 'Apple Computer, Inc.' }, configurable: true });
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const sdk = new StanddownSDK();
     warnSpy.mockRestore();
 
-    // onBeforeNavigate and onCommitted must be registered; onBeforeRequest must not
+    // onBeforeNavigate and onCommitted must be registered; onHeadersReceived must not
     expect(mockBrowser.webNavigation.onBeforeNavigate.addListener).toHaveBeenCalledTimes(1);
     expect(mockBrowser.webNavigation.onCommitted.addListener).toHaveBeenCalledTimes(1);
     expect(mockBrowser.tabs.onRemoved.addListener).toHaveBeenCalledTimes(1);
-    expect(mockBrowser.webRequest.onBeforeRequest.addListener).not.toHaveBeenCalled();
+    expect(mockBrowser.webRequest.onHeadersReceived.addListener).not.toHaveBeenCalled();
 
     sdk.destroy();
     expect(mockBrowser.webNavigation.onBeforeNavigate.removeListener).toHaveBeenCalledTimes(1);

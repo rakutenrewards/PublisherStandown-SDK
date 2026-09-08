@@ -9,7 +9,7 @@ This guide covers advanced integration scenarios for `@rakuten-rewards/standdown
 Before reading this guide, look at `sample-extensions/session-manager/service-worker.js` in this repository. It is a complete, production-oriented service worker that demonstrates:
 
 - SDK initialization with policies and `ownAffiliatePatterns`
-- `webNavigation.onCompleted`, `onErrorOccurred`, and `onCommitted` listeners (including multi-hop redirect handling)
+- `webRequest.onCompleted` / `onErrorOccurred` listeners that trigger detection once navigation settles (including multi-hop redirect handling)
 - A custom `SessionManager` for tracking affiliate sessions
 - Cross-tab coordination via session state
 - A `shouldStanddown` decision with a `reason` field (`'no_affiliate_detected'`, `'own_link'`, `'competitor_detected'`, `'session_active'`)
@@ -21,7 +21,7 @@ All patterns described in this guide are drawn from that implementation. Treat i
 ## Table of Contents
 
 - [Reference Implementation](#reference-implementation)
-- [Detection Modes: webRequest vs Navigation-Only](#detection-modes-webrequest-vs-navigation-only)
+- [Detection Modes: headers vs Navigation-Only](#detection-modes-headers-vs-navigation-only)
 - [Supplying Policies](#supplying-policies)
   - [Policy structure](#policy-structure)
   - [Rule Matching Semantics](#rule-matching-semantics)
@@ -36,26 +36,26 @@ All patterns described in this guide are drawn from that implementation. Treat i
 
 ---
 
-## Detection Modes: webRequest vs Navigation-Only
+## Detection Modes: headers vs Navigation-Only
 
 The SDK operates in one of two modes depending on the browser it runs in. Mode selection is automatic; no configuration is required.
 
-### webRequest mode (Chrome, Firefox, Edge)
+### Headers mode (Chrome, Firefox, Edge)
 
-On Chrome, Firefox, and Edge, the SDK registers a `webRequest.onBeforeRequest` listener. This listener fires for every individual HTTP request in the main frame, including server-side 3xx redirect hops. As a result, `redirectChain` in the detection result contains every URL in the chain from the initial affiliate click-tracking hop to the final merchant URL:
+On Chrome, Firefox, and Edge, the SDK registers a `webRequest.onHeadersReceived` listener. It fires for every main-frame HTTP response, and the SDK uses the response status code to build the chain: 3xx responses are buffered as redirect hops, and the first non-3xx response (2xx/4xx/5xx) closes the chain. As a result, `redirectChain` in the detection result contains every URL from the initial affiliate click-tracking hop to the final merchant URL:
 
 ```
 redirectChain: [
-  'https://dpbolvw.net/click?...',   // affiliate network hop (caught by onBeforeRequest)
-  'https://www.merchant.com/',       // final destination (caught by onCommitted)
+  'https://dpbolvw.net/click?...',   // affiliate network hop (3xx response)
+  'https://www.merchant.com/',       // final destination (2xx response, closes the chain)
 ]
 ```
 
-The SDK matches your policies against all URLs in the chain. This is the most complete detection mode.
+The SDK matches your policies against all URLs in the chain. This is the most complete detection mode, and it requires only the `webRequest` permission — `webNavigation` is **not** used on these browsers.
 
 ### Navigation-only mode (Safari)
 
-Safari's `webRequest` stubs are callable but silently drop all listeners. The SDK detects this via `navigator.vendor` and falls back to `webNavigation.onBeforeNavigate` as the buffer source instead.
+Safari's `webRequest` stubs are callable but silently drop all listeners. The SDK detects this via `navigator.vendor` and uses `webNavigation.onBeforeNavigate` (as the buffer source) plus `webNavigation.onCommitted` (to settle the chain) instead.
 
 In this mode, `onBeforeNavigate` fires for the initiating URL (the affiliate link the user clicked), but server-side redirect hops resolve invisibly inside the browser. `onCommitted` fires for the final committed URL. As a result, `redirectChain` contains only two entries:
 
@@ -66,13 +66,13 @@ redirectChain: [
 ]
 ```
 
-The intermediate hops are not visible, but affiliate tracking parameters embedded in the entry URL or surviving to the committed URL are still matched normally. Most affiliate networks include enough identifiers in these two URLs for reliable detection.
+The intermediate hops are not visible, but affiliate tracking parameters embedded in the entry URL or surviving to the committed URL are still matched normally. Most affiliate networks include enough identifiers in these two URLs for reliable detection. This mode requires the `webNavigation` permission.
 
 ### What this means for your integration
 
 No code changes are required. The same `checkForAffiliatePatterns(tabId)` call works identically in both modes. The only observable difference is the length and content of `result.redirectChain`:
 
-- On Chrome/Firefox, intermediate redirect hops are present.
+- On Chrome/Firefox/Edge, intermediate redirect hops are present.
 - On Safari, only the entry URL and the committed URL are present.
 
 If your integration inspects `redirectChain` directly (rather than relying on `hasAffiliatePattern` and `matchedPatterns`), be aware that chains will be shorter on Safari and intermediate hops will be absent.
@@ -164,21 +164,26 @@ Some extensions use a different model: they open a **background tab**, navigate 
 
 This creates a gap: the tab that carries evidence of the affiliate activation (the background tab) is closed before the user ever arrives at the merchant. The only way to bridge this gap is to **monitor all navigations on all tabs**, detect the activation on the background tab while it is still open, record that activation, and then check the recorded state when the user's visible tab subsequently loads the merchant page.
 
-The SDK observes every tab automatically; you do not need to filter to visible tabs. Call `checkForAffiliatePatterns` in a `webNavigation.onCompleted` listener that runs for every tab, capture any match, and store it against the merchant domain:
+The SDK observes every tab automatically; you do not need to filter to visible tabs. Call `checkForAffiliatePatterns` in a `webRequest.onCompleted` listener that runs for every tab, capture any match, and store it against the merchant domain. (`webRequest.onCompleted` fires after the final response, by which point the SDK's tracker has finalised the chain, and it needs no permission beyond `webRequest`. If you already declare `webNavigation`, `webNavigation.onCompleted` works too.)
 
 ```ts
 import { StanddownSDK } from '@rakuten-rewards/standdown-sdk';
 
 const shield = new StanddownSDK({ policies: MY_POLICIES });
 
+// Resolve the webRequest namespace the same way the SDK does internally
+// (browser on Firefox/Safari, chrome on Chrome/Edge).
+const webRequest = globalThis.browser?.webRequest ?? chrome.webRequest;
+const MAIN_FRAME = { urls: ['<all_urls>'], types: ['main_frame'] as chrome.webRequest.ResourceType[] };
+
 // Monitor ALL tabs; the background tab that carries the affiliate redirect
 // will be caught here before it closes.
-chrome.webNavigation.onCompleted.addListener(({ tabId, frameId }) => {
-  if (frameId !== 0) return; // top-level frame only
+webRequest.onCompleted.addListener(({ tabId }) => {
+  if (tabId < 0) return;
   const result = shield.checkForAffiliatePatterns(tabId);
   if (!result.hasAffiliatePattern) return;
   recordActivation(result); // store against merchant domain for later lookup
-});
+}, MAIN_FRAME);
 ```
 
 ### Implementing cross-tab coordination
@@ -201,12 +206,16 @@ const shield = new StanddownSDK({ policies: MY_POLICIES });
 // Simple in-memory record: merchant hostname → detected networks
 const pendingActivations = new Map<string, string[]>();
 
+// Resolve the webRequest namespace (browser on Firefox/Safari, chrome on Chrome/Edge).
+const webRequest = globalThis.browser?.webRequest ?? chrome.webRequest;
+const MAIN_FRAME = { urls: ['<all_urls>'], types: ['main_frame'] as chrome.webRequest.ResourceType[] };
+
 // Monitor ALL tabs in a single listener.
 // On every completed navigation:
 //   1. Check if this tab (possibly background) saw an affiliate redirect → record it.
 //   2. Check if a prior activation was recorded for the merchant this tab just loaded → stand down.
-chrome.webNavigation.onCompleted.addListener(({ tabId, frameId, url }) => {
-  if (frameId !== 0) return; // top-level frame only
+webRequest.onCompleted.addListener(({ tabId, url }) => {
+  if (tabId < 0) return;
 
   const result = shield.checkForAffiliatePatterns(tabId);
   if (result.hasAffiliatePattern) {
@@ -232,7 +241,7 @@ chrome.webNavigation.onCompleted.addListener(({ tabId, frameId, url }) => {
       markTabAsStanddown(tabId, networks);
     }
   } catch { /* malformed URL */ }
-});
+}, MAIN_FRAME);
 ```
 
 > **Session management is your responsibility.** The example above uses a simple consume-once model: the first tab to load the merchant after a background activation is suppressed, and the record is cleared. A production implementation will need more: TTL-based expiry so stale records don't accumulate, root-domain normalization so `shop.example.com` and `www.example.com` resolve to the same key, and per-domain LRU eviction to bound memory. See `sample-extensions/session-manager/session-manager.js` for a reference implementation of a `SessionManager` class with all of these properties, and `service-worker.js` in the same directory for how it is wired into the navigation listeners.
@@ -254,7 +263,7 @@ import { StanddownSDK } from '@rakuten-rewards/standdown-sdk';
 const shield = await StanddownSDK.create({ policies: MY_POLICIES, enableAuditLog: true });
 ```
 
-> **Manifest permission:** Add `"storage"` to your `manifest.json` `permissions` array alongside `"webNavigation"` and `"tabs"`.
+> **Manifest permission:** Add `"storage"` to your `manifest.json` `permissions` array alongside your navigation permissions (`"webRequest"` + `"tabs"` on Chrome/Firefox/Edge, or `"webNavigation"` + `"tabs"` on Safari).
 
 > **Top-level await caveat:** Chrome MV3 service workers can idle-terminate between events. If your extension must handle its very first navigation event after a cold start, consider wiring listeners before awaiting `create()`, or initialising synchronously with `new StanddownSDK({ policies: MY_POLICIES, enableAuditLog: true })` and accepting that the in-memory log will not contain entries from before the last restart until storage hydration completes asynchronously.
 

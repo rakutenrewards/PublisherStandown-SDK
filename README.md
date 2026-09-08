@@ -36,16 +36,30 @@ npm install @rakuten-rewards/standdown-sdk
 pnpm add @rakuten-rewards/standdown-sdk
 ```
 
+**Requirements**
+
+- A **Manifest V3** browser extension.
+- Permissions declared in your `manifest.json`:
+  - **Chrome / Firefox / Edge:**
+    - `webRequest` — **required** (observes the full redirect chain via `onHeadersReceived`)
+    - `host_permissions` — **required** (webRequest only sees hosts you have access to)
+    - `tabs` — **optional** (the SDK only listens to `tabs.onRemoved` for cleanup and reads no sensitive tab data, so it works without it)
+  - **Safari:**
+    - `webNavigation` — **required**
+    - `tabs` — **required**
+
+See [Manifest V3 Permissions](#manifest-v3-permissions) for full manifest examples, then follow the [Quick Start](#quick-start) to initialize the SDK.
+
 ---
 
 ## Browser Compatibility
 
 | Browser | Supported | Notes |
 |---------|-----------|-------|
-| Chrome | ✅ | Primary target. Uses `webRequest.onBeforeRequest` to capture all intermediate redirect hops. |
+| Chrome | ✅ | Primary target. Uses `webRequest.onHeadersReceived` to capture all intermediate redirect hops via HTTP status codes. |
 | Microsoft Edge | ✅ | Chromium-based; uses the same `chrome.*` APIs as Chrome with no additional configuration required. |
-| Firefox | ✅ | The SDK automatically resolves the `browser` namespace (Firefox) and `chrome` namespace (Chrome / Edge) at runtime. Uses `webRequest` mode. |
-| Safari | ✅ | Requires Safari 16.4+ (macOS Ventura 13.3) for MV3 service worker support. Safari's `webRequest` stubs are callable but silently drop all listeners; the SDK detects this via `navigator.vendor` and automatically switches to **navigation-only mode**, using `webNavigation.onBeforeNavigate` instead. In this mode, server-side redirect hops are not individually visible — `redirectChain` will contain the entry URL and the committed (merchant) URL, but not intermediate hops. Affiliate parameters that survive to the final URL are still detected normally. Validated via unit tests; automated E2E is not available (Playwright does not support Safari extension loading). |
+| Firefox | ✅ | The SDK automatically resolves the `browser` namespace (Firefox / Safari) and `chrome` namespace (Chrome / Edge) at runtime. Uses `webRequest.onHeadersReceived` mode. |
+| Safari | ✅ | Requires Safari 16.4+ (macOS Ventura 13.3) for MV3 service worker support. Safari's `webRequest` stubs are callable but silently drop all listeners; the SDK detects this via `navigator.vendor` and automatically switches to **navigation-only mode**, using `webNavigation.onBeforeNavigate` + `webNavigation.onCommitted` instead. In this mode, server-side redirect hops are not individually visible — `redirectChain` will contain the entry URL and the committed (merchant) URL, but not intermediate hops. Affiliate parameters that survive to the final URL are still detected normally. Validated via unit tests; automated E2E is not available (Playwright does not support Safari extension loading). |
 
 ---
 
@@ -53,11 +67,11 @@ pnpm add @rakuten-rewards/standdown-sdk
 
 The required permissions depend on which browser your extension targets.
 
-**Chrome and Firefox** (webRequest mode — full redirect chain visibility):
+**Chrome, Firefox, and Edge** (headers mode — full redirect chain visibility). `webNavigation` is **not** required:
 
 ```json
 {
-  "permissions": ["webNavigation", "webRequest", "tabs"],
+  "permissions": ["webRequest"],
   "host_permissions": ["<all_urls>"]
 }
 ```
@@ -70,7 +84,7 @@ The required permissions depend on which browser your extension targets.
 }
 ```
 
-**Cross-browser extensions** that target all three can declare all permissions; the SDK will use `webRequest` on Chrome/Firefox and ignore it on Safari:
+**Cross-browser extensions** that target all platforms can declare all permissions; the SDK uses `webRequest` on Chrome/Firefox/Edge and `webNavigation` on Safari, ignoring the unused one on each:
 
 ```json
 {
@@ -79,13 +93,13 @@ The required permissions depend on which browser your extension targets.
 }
 ```
 
-`webNavigation` is required on all browsers to observe redirect chains and committed navigations. `webRequest` (with `host_permissions: ["<all_urls>"]`) enables observation of individual intermediate redirect hops on Chrome and Firefox. `tabs` is required for tab lifecycle cleanup (clearing state when a tab closes).
+`webRequest` (with `host_permissions: ["<all_urls>"]`) enables `onHeadersReceived` observation of the full redirect chain on Chrome, Firefox, and Edge. `webNavigation` is **only** used on Safari (for `onBeforeNavigate` + `onCommitted`); the SDK never touches it on other browsers, so it can be omitted from Chrome/Firefox/Edge-only builds. `tabs` is used for tab lifecycle cleanup (clearing state when a tab closes) — the SDK only listens to `tabs.onRemoved` and reads no sensitive tab data, so on **Chrome, Firefox, and Edge the `tabs` permission is optional** and may be omitted (the `onRemoved` event still fires). On **Safari**, declare `tabs` as shown above.
 
 If you enable the optional [Audit Log](#audit-log), add `"storage"` to persist detections across service worker restarts:
 
 ```json
 {
-  "permissions": ["webNavigation", "webRequest", "tabs", "storage"],
+  "permissions": ["webRequest", "storage"],
   "host_permissions": ["<all_urls>"]
 }
 ```
@@ -136,7 +150,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 ```
 
-> **How it works:** `checkForAffiliatePatterns` inspects the redirect chain observed for a _specific tab_. This covers the classical affiliate activation model: a user clicks an affiliate link, passes through the network's redirect hop, and arrives at a merchant page with the session already attributed. Call it from your `webNavigation.onCompleted` (or `onErrorOccurred`) listener so it runs as soon as navigation settles; the full chain is available at that point.
+> **How it works:** `checkForAffiliatePatterns` inspects the redirect chain observed for a _specific tab_. This covers the classical affiliate activation model: a user clicks an affiliate link, passes through the network's redirect hop, and arrives at a merchant page with the session already attributed. Call it from a listener that fires once navigation settles — `webRequest.onCompleted` / `onErrorOccurred` (recommended; no extra permission beyond `webRequest`), or `webNavigation.onCompleted` if you already declare `webNavigation` — so the full chain is available at that point.
 
 > **Complete working example:** `sample-extensions/session-manager/service-worker.js` in this repository is a production-oriented service worker demonstrating SDK initialization with policies, navigation listeners, session management, and stand-down decision logic. When in doubt, treat it as the canonical reference.
 
@@ -274,7 +288,7 @@ class StanddownSDK {
 }
 ```
 
-`checkForAffiliatePatterns`: inspects the URL chain observed for the given tab and returns a typed `DetectionResult`. Call this from your `webNavigation.onCompleted` / `onErrorOccurred` listener whenever you need to make a stand-down decision.
+`checkForAffiliatePatterns`: inspects the URL chain observed for the given tab and returns a typed `DetectionResult`. Call this from a navigation-settled listener (`webRequest.onCompleted` / `onErrorOccurred`, or `webNavigation.onCompleted`) whenever you need to make a stand-down decision.
 
 ### `StanddownSDKConfig`
 
@@ -403,9 +417,9 @@ interface PolicyRule {
 
 ## Graceful Degradation
 
-Ensure `webNavigation` and `tabs` are declared in your `manifest.json` (see [Manifest V3 Permissions](#manifest-v3-permissions)). If `chrome.webNavigation` is not available at construction time, the SDK logs a warning and initialises a no-op tracker. Affiliate detection will be silently disabled with no user-visible signal. All calls to `checkForAffiliatePatterns` return `{ hasAffiliatePattern: false, matchedPatterns: [], redirectChain: [], detectedAt: null, expiresAt: null, isOwnAffiliateLink: false }` until navigation events can be observed.
+Ensure the navigation permissions for your target browsers are declared in your `manifest.json` (see [Manifest V3 Permissions](#manifest-v3-permissions)): `webRequest` for Chrome/Firefox/Edge (`tabs` optional), or `webNavigation` + `tabs` for Safari. If the required API is not available at construction time, the SDK logs a warning and initialises a no-op tracker. Affiliate detection will be silently disabled with no user-visible signal. All calls to `checkForAffiliatePatterns` return `{ hasAffiliatePattern: false, matchedPatterns: [], redirectChain: [], detectedAt: null, expiresAt: null, isOwnAffiliateLink: false }` until navigation events can be observed.
 
-On Safari, the SDK automatically selects navigation-only mode (using `webNavigation.onBeforeNavigate`) regardless of whether `webRequest` is declared. You do not need to handle this yourself.
+On Safari, the SDK automatically selects navigation-only mode (using `webNavigation.onBeforeNavigate` + `onCommitted`) regardless of whether `webRequest` is declared. On Chrome/Firefox/Edge it uses `webRequest.onHeadersReceived` and never touches `webNavigation`. You do not need to handle this yourself.
 
 If no policies are provided (or all supplied policies fail validation), the SDK logs a `console.warn` at construction time: `[StanddownSDK] No policies loaded. checkForAffiliatePatterns() will always return no-match.` Ensure `config.policies` contains at least one valid policy before deploying.
 
