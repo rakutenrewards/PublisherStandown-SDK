@@ -1,6 +1,6 @@
 {
   "name": "@rakuten-rewards/standdown-sdk",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Zero-dependency TypeScript SDK for detecting affiliate redirect patterns in browser extensions",
   "author": "Rakuten Rewards",
   "license": "MIT",

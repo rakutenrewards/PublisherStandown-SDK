@@ -48,8 +48,8 @@ export class StanddownSDK {
     if (this.preparedRules.length === 0) {
       console.warn(
         '[StanddownSDK] No policies loaded. checkForAffiliatePatterns() will always ' +
-        'return no-match. Pass one or more NetworkPolicy objects via config.policies ' +
-        'to enable detection.',
+          'return no-match. Pass one or more NetworkPolicy objects via config.policies ' +
+          'to enable detection.'
       );
     }
     this.tracker = tracker ?? StanddownSDK.createTracker();
@@ -165,8 +165,8 @@ export class StanddownSDK {
     if (this.auditLog === null) {
       throw new Error(
         '[StanddownSDK] getEventsByDomain() requires enableAuditLog: true. ' +
-        'Pass enableAuditLog: true to StanddownSDK.create() and ensure the ' +
-        '"storage" manifest permission is declared in your extension manifest.',
+          'Pass enableAuditLog: true to StanddownSDK.create() and ensure the ' +
+          '"storage" manifest permission is declared in your extension manifest.'
       );
     }
     return this.auditLog.getByDomain(input);
@@ -186,8 +186,8 @@ export class StanddownSDK {
     if (this.auditLog === null) {
       throw new Error(
         '[StanddownSDK] getEventLog() requires enableAuditLog: true. ' +
-        'Pass enableAuditLog: true to StanddownSDK.create() and ensure the ' +
-        '"storage" manifest permission is declared in your extension manifest.',
+          'Pass enableAuditLog: true to StanddownSDK.create() and ensure the ' +
+          '"storage" manifest permission is declared in your extension manifest.'
       );
     }
     return this.auditLog.getAll();
@@ -207,20 +207,21 @@ export class StanddownSDK {
 
   /**
    * Creates a NavigationTracker wired to real browser APIs when available,
-   * or a stub tracker with a console warning when webNavigation is absent.
+   * or a stub tracker with a console warning when the required APIs are absent.
    *
-   * Uses webRequest mode on Chrome and Firefox (richer chain data: all
-   * intermediate HTTP hops visible). Uses navigation-only mode on Safari
-   * (navigator.vendor check): Safari exposes webRequest stubs that silently
-   * drop listeners, making API-shape probes unreliable.
+   * Uses headers mode (webRequest.onHeadersReceived) on Chrome, Firefox, and
+   * Edge. Uses navigation-only mode (webNavigation) on Safari (navigator.vendor
+   * check): Safari exposes webRequest stubs that silently drop listeners, so it
+   * relies on webNavigation instead.
    */
   private static createTracker(): NavigationTracker {
     const deps = StanddownSDK.tryBuildDeps();
     if (deps === null) {
       console.warn(
-        '[StanddownSDK] webNavigation is not available. ' +
-          'Ensure the "webNavigation" and "tabs" permissions are declared in your manifest. ' +
-          'checkForAffiliatePatterns() will return no-match until navigation events are tracked.',
+        '[StanddownSDK] No usable navigation API is available. ' +
+          'Chrome/Firefox/Edge require the "webRequest" permission ("tabs" is optional); ' +
+          'Safari requires the "webNavigation" and "tabs" permissions. ' +
+          'checkForAffiliatePatterns() will return no-match until navigation events are tracked.'
       );
       return new NavigationTracker();
     }
@@ -230,16 +231,19 @@ export class StanddownSDK {
   /**
    * Attempts to build TrackerDeps from the real browser global APIs.
    *
-   * Uses webRequest mode on Chrome/Firefox. Uses navigation-only mode on Safari
-   * (detected via navigator.vendor) because Safari's webRequest stubs are
-   * callable but silently drop all listeners. Returns null if webNavigation
-   * itself is absent (e.g. Node.js / Vitest environment, missing permissions).
+   * Chrome/Firefox/Edge use headers mode (webRequest.onHeadersReceived). Safari
+   * (detected via navigator.vendor) uses navigation-only mode (webNavigation)
+   * because Safari's webRequest stubs are callable but silently drop all
+   * listeners. webNavigation is only touched on Safari, so Chrome/Firefox/Edge
+   * integrations do not need to declare the "webNavigation" permission.
+   *
+   * Returns null if:
+   * - Neither `browser` nor `chrome` is defined (e.g. Node.js / Vitest environment).
+   * - The required API for the detected browser throws (missing manifest permissions).
    */
   private static tryBuildDeps(): TrackerDeps | null {
     try {
       const api = StanddownSDK.resolveWebExtApi();
-      // Verify webNavigation is available (required for all modes).
-      const onCommitted = api.webNavigation.onCommitted;
       const onTabRemoved = api.tabs.onRemoved;
 
       // Safari (iOS and macOS) exposes webRequest as an accessible object with
@@ -250,21 +254,22 @@ export class StanddownSDK {
       const isSafari =
         typeof navigator !== 'undefined' && navigator.vendor === 'Apple Computer, Inc.';
 
-      if (!isSafari) {
+      if (isSafari) {
+        // Safari: navigation-only mode. onBeforeNavigate captures the entry URL
+        // for each navigation; intermediate server-side hops are invisible but
+        // affiliate tracking parameters typically survive to the committed URL.
         return {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
-          onBeforeRequest: api.webRequest.onBeforeRequest as any,
-          onCommitted,
+          onBeforeNavigate: api.webNavigation.onBeforeNavigate,
+          onCommitted: api.webNavigation.onCommitted,
           onTabRemoved,
         };
       }
 
-      // Safari: use navigation-only mode. onBeforeNavigate captures the entry
-      // URL for each navigation; intermediate server-side hops are invisible but
-      // affiliate tracking parameters typically survive to the committed URL.
+      // Chrome/Firefox/Edge: headers mode. onHeadersReceived captures every HTTP
+      // hop via status code.
       return {
-        onBeforeNavigate: api.webNavigation.onBeforeNavigate,
-        onCommitted,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
+        onHeadersReceived: api.webRequest.onHeadersReceived as any,
         onTabRemoved,
       };
     } catch {
@@ -275,23 +280,26 @@ export class StanddownSDK {
   /**
    * Resolves the WebExtension API namespace for the current browser.
    *
-   * Firefox exposes its extension API as `browser` (a Promise-based namespace),
-   * while Chrome uses `chrome`. When running in Firefox, `globalThis.browser`
-   * is defined and exposes `webNavigation`; we prefer it over `chrome` to
-   * ensure event listeners are registered on the correct namespace.
+   * Firefox and Safari expose their extension API as `browser` (a Promise-based
+   * namespace), while Chrome/Edge use `chrome`. When running in Firefox/Safari,
+   * `globalThis.browser` is defined; we prefer it over `chrome` to ensure event
+   * listeners are registered on the correct namespace.
    *
    * The `any` cast is intentional and necessary: `browser` is not declared in
    * @types/chrome (which only covers the `chrome` namespace), and importing a
    * separate Firefox types package would add a dependency. At runtime, if
-   * `browser` looks like `chrome` (has `webNavigation`), we use it.
+   * `browser` looks like a WebExtension namespace (has `webRequest` for
+   * Chrome/Firefox/Edge or `webNavigation` for Safari), we use it.
    */
   private static resolveWebExtApi(): typeof chrome {
     try {
       /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
       const b = (globalThis as any).browser;
-      if (b?.webNavigation) return b as typeof chrome;
+      if (b?.webRequest || b?.webNavigation) return b as typeof chrome;
       /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return chrome;
   }
 }

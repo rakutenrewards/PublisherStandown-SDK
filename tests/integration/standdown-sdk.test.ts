@@ -9,8 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { StanddownSDK } from '../../src/api/index.js';
 import { NavigationTracker } from '../../src/detection/tracker.js';
 import type {
-  BeforeRequestDetails,
-  CommittedDetails,
+  HeadersReceivedDetails,
   TrackerDeps,
 } from '../../src/detection/tracker.js';
 import { AuditLog } from '../../src/audit/audit-log.js';
@@ -312,34 +311,42 @@ describe('StanddownSDK: redirectChain in result', () => {
 
 /**
  * Creates a NavigationTracker with injectable mock chrome events and returns
- * the tracker plus helper functions to fire each event type from a test.
+ * the tracker plus helper functions to drive it from a test.
+ *
+ * Chrome/Firefox/Edge run in headers mode (onHeadersReceived), so these helpers
+ * map onto status codes:
+ * - fireBeforeRequest(url) → a 3xx response (buffers the URL as a redirect hop)
+ * - fireCommitted(url)     → a 2xx response (closes the chain on the final URL)
+ * The legacy names/args are retained so the scenario call-sites below read the
+ * same as the real navigation sequence they simulate; the transitionQualifiers
+ * argument is ignored in headers mode.
  */
 function makeLiveTracker() {
-  const onBeforeRequestImpl = makeMockEvent<BeforeRequestDetails>();
-  const onBeforeRequest = {
-    addListener(cb: (d: BeforeRequestDetails) => void, _filter: unknown) {
-      onBeforeRequestImpl.addListener(cb);
+  const onHeadersReceivedImpl = makeMockEvent<HeadersReceivedDetails>();
+  const onHeadersReceived = {
+    addListener(cb: (d: HeadersReceivedDetails) => void, _filter: unknown) {
+      onHeadersReceivedImpl.addListener(cb);
     },
-    removeListener(cb: (d: BeforeRequestDetails) => void) {
-      onBeforeRequestImpl.removeListener(cb);
+    removeListener(cb: (d: HeadersReceivedDetails) => void) {
+      onHeadersReceivedImpl.removeListener(cb);
     },
   };
-  const onCommitted = makeMockEvent<CommittedDetails>();
   const onTabRemoved = makeMockEvent<number>();
 
-  const deps: TrackerDeps = { onBeforeRequest, onCommitted, onTabRemoved };
+  const deps: TrackerDeps = { onHeadersReceived, onTabRemoved };
   const tracker = new NavigationTracker(deps);
 
   return {
     tracker,
-    fireBeforeRequest: (tabId: number, url: string, type = 'main_frame', frameId = 0) =>
-      onBeforeRequestImpl.fire({ tabId, url, type, frameId }),
+    // 3xx response — buffers this URL as a redirect hop.
+    fireBeforeRequest: (tabId: number, url: string, type = 'main_frame') =>
+      onHeadersReceivedImpl.fire({ tabId, url, type, statusCode: 302 }),
+    // 2xx response — closes the chain on this (final) URL.
     fireCommitted: (
       tabId: number,
       url: string,
-      transitionQualifiers: string[] = [],
-      frameId = 0,
-    ) => onCommitted.fire({ tabId, url, frameId, transitionQualifiers }),
+      _transitionQualifiers: string[] = [],
+    ) => onHeadersReceivedImpl.fire({ tabId, url, type: 'main_frame', statusCode: 200 }),
     fireTabRemoved: (tabId: number) => onTabRemoved.fire(tabId),
   };
 }
